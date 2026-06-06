@@ -40,6 +40,8 @@ src/
 
 Pakowanie do instalatora: `build/` (`Build-Installer.ps1`, `installer-main.ps1`) + workflow CI `.github/workflows/release.yml`.
 
+`wiki/` — osobne repo git (`wiki/.git/`) wskazujące na `Transcription-manager.wiki.git`. Ignorowane przez główne repo (`.gitignore`). Pushuj osobno z poziomu IDE lub `cd wiki && git push`.
+
 Każdy `Scripts/*.ps1` zakłada że wszystkie `lib/*` są już załadowane (dot-source'owane przez Manager.ps1). Nigdy nie uruchamiaj `New-Transcription.ps1` bezpośrednio — tylko przez Managera.
 
 ## Farma transkrypcji (kolejka na wspólnym folderze)
@@ -224,53 +226,17 @@ $OutputEncoding           = [System.Text.UTF8Encoding]::new()
 
 To naprawia rendering polskich znaków w nazwach plików (np. `Zajęcia kontaktowe`) przy listowaniu w pickerze.
 
-### Em-dashe i inne unicode-y też OK
-
-Skoro mamy BOM, możemy używać em-dash `—`, strzałki `→`, multiplikacji `×` itp. Wszystkie znaki Unicode działają. Emoji też (np. w prompcie do AI: 📢, ⚙️) — pod warunkiem że terminal je renderuje (Windows Terminal i IntelliJ Terminal — tak; stary conhost — tylko monochromatyczne).
+Skoro mamy BOM, wszystkie znaki Unicode działają (em-dash `—`, strzałki `→` itp.). Emoji w terminalach Windows Terminal i IntelliJ Terminal — tak; stary conhost — tylko monochromatyczne.
 
 ### Comment-based help
 
-Każda publiczna funkcja:
-
-```powershell
-<#
-.SYNOPSIS Jednolinijkowe co robi.
-.PARAMETER X Opis parametru
-.EXAMPLE Show-Picker -StartPath C:\
-#>
-function Show-Picker { param(...) ... }
-```
-
-Działa potem `Get-Help Show-Picker -Full`.
+Każda publiczna funkcja ma blok `<# .SYNOPSIS ... .PARAMETER ... .EXAMPLE ... #>` — działa `Get-Help Show-Picker -Full`.
 
 ### Brak komentarzy "co robi linia"
 
 Komentuj **WHY** (powód decyzji, hidden gotcha, nieoczywisty workaround), **NIGDY WHAT** (to widać z kodu). Jeśli kod się tłumaczy sam — bez komentarza.
 
-**OK** (wyjaśnia powód/gotcha):
-```powershell
-# PYTHONUNBUFFERED — bez tego logi sa puste az do zakonczenia procesu
-$env:PYTHONUNBUFFERED = "1"
-
-# pip jest dostarczany z instalacją Pythona — osobno nie da się go zainstalować
-[bool] Install() { return $false }
-```
-
-**NIE** (opisuje co robi następna linia):
-```powershell
-# Iteruj po plikach
-foreach ($f in $files) { ... }
-
-# Pobierz najnowszego Pythona 3.x z winget (winget nie ma aliasu "latest")
-$LatestPython = (winget search ...)
-
-# Sprawdza czy zależność jest dostępna w PATH
-[bool] Test() { return $null -ne (Get-Command $this.Command -EA SilentlyContinue) }
-```
-
-Jeśli nazwa funkcji + body są oczywiste — nie pisz komentarza nad nimi. `LatestPackageId()`, `Test()`, `Install()` w klasie `Dependency` tłumaczą się same.
-
-Również NIE rób komentarzy "sekcyjnych" w stylu `# --- Python ---` nad każdą klasą gdy nazwa klasy mówi to samo (`class PythonDependency`).
+Komentuj **WHY** (hidden constraint, gotcha, workaround), **NIGDY WHAT** (to widać z kodu). Jeśli nazwa funkcji + body tłumaczą się same — brak komentarza. Nie rób sekcyjnych `# --- Python ---` gdy nazwa klasy mówi to samo.
 
 ### Ścieżki — używaj `$PSCommandPath` nie `$PSScriptRoot`
 
@@ -305,19 +271,7 @@ $FarmDir    = if ($env:TRANSCRIPTION_FARM_DIR)   { $env:TRANSCRIPTION_FARM_DIR }
 
 **NIE hardkoduj `C:\Transkrypcja` jako fallback** — install.ps1 ma flagę `-InstallDir`, user może mieć aplikację gdziekolwiek.
 
-IntelliJ run config (`.idea/runConfigurations/Manager.xml`) ustawia te env vars:
-
-```xml
-<envs>
-    <env name="TRANSCRIPTION_CONFIG_DIR" value="$PROJECT_DIR$\workspace" />
-    <env name="TRANSCRIPTION_LOGS_DIR" value="$PROJECT_DIR$\.workspace\logi" />
-    <env name="TRANSCRIPTION_OUTPUT_DIR" value="$PROJECT_DIR$\.workspace\Wyniki" />
-    <env name="TRANSCRIPTION_RUNTIME_FILE" value="$PROJECT_DIR$\.workspace\runtime.json" />
-    <env name="TRANSCRIPTION_FARM_DIR" value="$PROJECT_DIR$\.workspace\Farma" />
-</envs>
-```
-
-(Manager.xml realnie ustawia te zmienne inline w `SCRIPT_TEXT` przez `$env:...='...'` przed `Start-Process`, nie w bloku `<envs>` — efekt ten sam.)
+IntelliJ run config (`.idea/runConfigurations/Manager.xml`) ustawia env vars inline w `SCRIPT_TEXT` przez `$env:...='...'` przed `Start-Process`.
 
 `.workspace/` jest w gitignore (poza `.gitkeep`) — configs, logi, wyniki nie są commitowane.
 
@@ -407,8 +361,13 @@ while ($true) {
 
 Nie ma test framework'u (Pester nie był setupowany). Testy manualne:
 
-1. **Picker** — `Show-Picker -StartPath C:\` w shellu z załadowanym lib/
-2. **Multi-picker** — to samo z `Show-MultiPicker`
+1. **Manager (dev)** — uruchom Run config "Manager" z IntelliJ (ustawia env vars workspace) lub:
+   ```powershell
+   $env:TRANSCRIPTION_CONFIG_DIR = "$PWD\.workspace"
+   . .\src\Manager.ps1
+   ```
+2. **Picker** — `Show-Picker -StartPath C:\` w shellu z załadowanym lib/
+3. **Multi-picker** — to samo z `Show-MultiPicker`
 3. **Dashboard** — uruchom `New-Transcription.ps1` na 2-3 krótkich plikach (30s każdy), zobacz czy progress się aktualizuje
 4. **Install** — `.\install.ps1 -SkipDownload` na czystej VM (Windows Sandbox świetny do tego)
 
@@ -472,16 +431,7 @@ function Foo {
 }
 ```
 
-To samo dotyczy każdego cmdlet z return value (np. `New-Item`, `Add-Member`) — albo użyj `| Out-Null`, albo `$null = `, albo `[void](...)`.
-
-**Caller też powinien filtrować defensywnie**:
-```powershell
-$result = Foo
-$result = @($result | Where-Object { $_ -and $_ -is [string] })
-if ($result.Count -eq 0) { ... }
-```
-
-Nie polegaj tylko na `if (-not $result)` — `@("", $null)` jest truthy.
+To samo dotyczy każdego cmdlet z return value (np. `New-Item`, `Add-Member`) — albo użyj `| Out-Null`, albo `$null = `, albo `[void](...)`. Nie polegaj na `if (-not $result)` gdy funkcja może zwrócić `@("", $null)` — jest truthy.
 
 ## Architektura i SOLID
 
@@ -509,33 +459,26 @@ install/
     └── Shortcut.ps1
 ```
 
-### Reguły dziedziczone z SOLID
+### Reguły SOLID i czystego kodu
 
-- **S — Single Responsibility**: każdy plik ma JEDNĄ odpowiedzialność, którą można nazwać w jednej linii. Jeśli musisz pisać "i" w opisie pliku — rozdziel.
+- **S**: każdy plik ma JEDNĄ odpowiedzialność — jeśli musisz pisać "i" w opisie, rozdziel.
+- **O**: nowa zależność → nowy plik w `Dependencies/` (autodiscovery przez `Get-ChildItem -Filter *Dependency.ps1`), bez edycji `Phases/Dependencies.ps1`.
+- **L**: `Install()` i `Test()` zawsze zwracają `[bool]`, nigdy nie throw — nie łam kontraktu.
+- **I**: klasa `Dependency` ma tylko `Test` i `Install`. YAGNI.
+- **D**: `Phases/Dependencies.ps1` operuje na abstrakcji `Dependency`, nie na konkretnych klasach.
+- **Plik = jedna eksportowana rzecz**, nazwa pliku == nazwa eksportu.
+- Nie twórz `Utils/`, `Helpers/`, `Misc/` — to znak że nie wiesz po co plik istnieje.
+- Entrypoint (`install.ps1`) to indeks kroków, nie implementacja.
 
-- **O — Open/Closed**: rozszerzaj projekt przez **dodawanie plików**, nie modyfikowanie istniejących. Dodać nową zależność → nowy plik w `Dependencies/`, instalator sam ją wykryje przez `Get-ChildItem -Filter *Dependency.ps1`. Bez ruszania `Phases/Dependencies.ps1`.
-
-- **L — Liskov Substitution**: każda klasa pochodna od `Dependency` musi działać poprawnie wszędzie gdzie używana jest `Dependency`. Nie łam kontraktu — `Install()` zawsze zwraca `[bool]`, `Test()` zawsze zwraca `[bool]`, nigdy nie throw.
-
-- **I — Interface Segregation**: klasa `Dependency` ma tylko 2 metody publiczne (`Test`, `Install`). Nie dodawaj `Uninstall`, `Update`, `Diagnose` itp. dopóki ktoś tego nie używa — YAGNI.
-
-- **D — Dependency Inversion**: `Phases/Dependencies.ps1` operuje na abstrakcji `Dependency`, nie na konkretnych klasach. Można podmienić listę zależności bez edycji fazy.
-
-### Reguły praktyczne czystego kodu
-
-- **Plik = jedna eksportowana rzecz**: `PythonDependency.ps1` zawiera klasę `PythonDependency`, nic więcej.
-- **Nazwa pliku == nazwa głównego eksportu**: jeśli plik nazywa się `Dependencies.ps1` w `Phases/`, główna funkcja to `Invoke-Dependencies`.
-- **Niezależne funkcje w jednym pliku**: jeśli kilka małych funkcji służy temu samemu celowi (jak `Write-OK`/`Write-Skip`/`Write-Missing` w `Logging.ps1`), trzymaj je razem. Inaczej rozdziel.
-- **Subfolder ma sensowne grupowanie**: `Core/`, `Dependencies/`, `Phases/` — każdy ma czytelny "po co tu jestem". Nie twórz `Utils/`, `Helpers/`, `Misc/` — to znaki że nie wiesz po co plik istnieje.
-- **Entrypoint to indeks zawartości**: `install.ps1` ma być zwięzły. Czytasz go i widzisz CO się dzieje (`Show-Header`, `Invoke-SystemCheck`, ...), nie JAK.
-
-### Reguła workflow: `git add` po każdej zmianie
+### Reguła workflow: `git add` po każdej zmianie, commit tylko na żądanie
 
 Po każdej operacji write/edit/move/delete plików — bez wyjątku — wykonaj:
 
 ```powershell
 git add .
 ```
+
+**Nigdy nie commituj samodzielnie.** Commit tylko gdy user wprost o to poprosi.
 
 Powodów kilka:
 - IDE pokazuje status (added/modified) — wiesz dokładnie co poszło i czy nic się nie zgubiło.
