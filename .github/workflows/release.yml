@@ -21,13 +21,13 @@ jobs:
         id: ver
         shell: powershell
         run: |
-          $tags = git tag
-          if ($tags) {
-            $v = (git describe --tags).Trim()
-          } else {
+          $v = git describe --tags 2>$null
+          if ($LASTEXITCODE -ne 0) {
             $count = (git rev-list --count HEAD).Trim()
             $sha   = (git rev-parse --short HEAD).Trim()
             $v = "v0.0.0-$count-g$sha"
+          } else {
+            $v = $v.Trim()
           }
           "version=$v" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           Write-Host "Wersja: $v"
