@@ -66,7 +66,14 @@ Get-ChildItem (Join-Path $instDir "Dependencies") -Filter "*Dependency.ps1" |
 
 Get-ChildItem (Join-Path $instDir "Phases") -Filter *.ps1 | ForEach-Object { . $_.FullName }
 
-Invoke-Install -RepoRoot $repoRoot -InstallDir $InstallDir -NoShortcut:$NoShortcut -NoDeps:$NoDeps -LogFile $logFile
+try {
+    Invoke-Install -RepoRoot $repoRoot -InstallDir $InstallDir -NoShortcut:$NoShortcut -NoDeps:$NoDeps -LogFile $logFile
+} catch [OperationCanceledException] {
+    if (-not $SkipDownload) {
+        Remove-Item $tmpZip -Force -EA SilentlyContinue
+        Remove-Item $tmpDir -Recurse -Force -EA SilentlyContinue
+    }
+}
 
 $null = Stop-Transcript -ErrorAction SilentlyContinue
-$null = Read-Host "  Naciśnij Enter aby zakończyć"
+$null = Read-Host "  Naciśnij dowolny klawisz aby zamknąć"

@@ -18,8 +18,8 @@
     if (Test-Path $InstallDir) {
         Write-Info "Folder $InstallDir już istnieje"
         if (-not (Ask-YN "Nadpisać pliki aplikacji (zachowamy configi i Wyniki/)?" $true)) {
-            Write-Host "  Anulowano." -ForegroundColor DarkGray
-            exit 0
+            Write-Host "`n  Instalacja anulowana." -ForegroundColor Red
+            throw [OperationCanceledException]::new("Anulowano przez użytkownika")
         }
         $preserve = @("*.config.json", "Wyniki", "logi")
         Get-ChildItem $InstallDir -Force | Where-Object {

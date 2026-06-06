@@ -80,27 +80,38 @@ function Ask-Choice {
         [string[]]$Options,
         [int]$Default = 0
     )
+    $sel = $Default
+    $w   = [Console]::WindowWidth
+
     Write-Host ""
     Write-Host "  $Question" -ForegroundColor Yellow
+    Write-Host "  (strzalki góra/dół, Enter zatwierdza)" -ForegroundColor DarkGray
+
+    $startRow = [Console]::CursorTop
     for ($i = 0; $i -lt $Options.Count; $i++) {
-        $marker = if ($i -eq $Default) { ">" } else { " " }
-        Write-Host ("    $marker $($i+1)  $($Options[$i])") -ForegroundColor White
+        $marker = if ($i -eq $sel) { ">" } else { " " }
+        $color  = if ($i -eq $sel) { 'Cyan' } else { 'White' }
+        Write-Host ("    $marker  $($Options[$i])").PadRight($w - 1) -ForegroundColor $color
     }
-    Write-Host "  Wybór: " -NoNewline -ForegroundColor Yellow
 
     while ($true) {
         $k = [Console]::ReadKey($true)
-        if ($k.Key -eq 'Enter') {
-            Write-Host ($Default + 1) -ForegroundColor Green
-            return $Default
-        }
-        $c = $k.KeyChar
-        if ($c -match '\d') {
-            $n = [int][string]$c - 1
-            if ($n -ge 0 -and $n -lt $Options.Count) {
-                Write-Host ($n + 1) -ForegroundColor Green
-                return $n
-            }
+        if ($k.Key -eq 'Enter') { break }
+
+        $newSel = $sel
+        if ($k.Key -eq 'UpArrow')   { $newSel = [Math]::Max(0, $sel - 1) }
+        if ($k.Key -eq 'DownArrow') { $newSel = [Math]::Min($Options.Count - 1, $sel + 1) }
+
+        if ($newSel -ne $sel) {
+            [Console]::SetCursorPosition(0, $startRow + $sel)
+            Write-Host ("       $($Options[$sel])").PadRight($w - 1) -ForegroundColor White -NoNewline
+            [Console]::SetCursorPosition(0, $startRow + $newSel)
+            Write-Host ("    >  $($Options[$newSel])").PadRight($w - 1) -ForegroundColor Cyan -NoNewline
+            $sel = $newSel
         }
     }
+
+    [Console]::SetCursorPosition(0, $startRow + $Options.Count)
+    Write-Host ""
+    return $sel
 }

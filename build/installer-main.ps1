@@ -42,7 +42,12 @@ if (-not (Test-Path (Join-Path $repoRoot "src"))) {
     exit 1
 }
 
-Invoke-Install -RepoRoot $repoRoot -InstallDir $InstallDir -NoShortcut:$NoShortcut -NoDeps:$NoDeps -LogFile $logFile
+try {
+    Invoke-Install -RepoRoot $repoRoot -InstallDir $InstallDir -NoShortcut:$NoShortcut -NoDeps:$NoDeps -LogFile $logFile
+} catch [OperationCanceledException] {
+    Remove-Item $srcZip -Force -EA SilentlyContinue
+    Remove-Item $srcDir -Recurse -Force -EA SilentlyContinue
+}
 
 $null = Stop-Transcript -ErrorAction SilentlyContinue
-$null = Read-Host "  Naciśnij Enter aby zakończyć"
+$null = Read-Host "  Naciśnij dowolny klawisz aby zamknąć"

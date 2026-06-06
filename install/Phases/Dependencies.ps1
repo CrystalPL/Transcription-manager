@@ -57,15 +57,10 @@
         if ($dep.SupportsPortable) {
             $choice = Ask-Choice "Jak zainstalować $name?" @(
                 "Systemowo (winget / pip)",
-                "Portable (do folderu instalacji)",
-                "Pomiń"
+                "Portable (do folderu instalacji)"
             ) 0
         } else {
-            $sel = Ask-Choice "Jak zainstalować $name?" @(
-                "Systemowo (winget / pip)",
-                "Pomiń"
-            ) 0
-            $choice = if ($sel -eq 0) { 0 } else { 2 }
+            $choice = 0
         }
 
         switch ($choice) {
@@ -89,9 +84,7 @@
                     Write-Missing "Instalacja portable $name nieudana"
                 }
             }
-            default {
-                Write-Skip "$name — pominięto"
-            }
+            default { }
         }
     }
 
