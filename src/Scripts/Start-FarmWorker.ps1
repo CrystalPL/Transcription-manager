@@ -8,8 +8,8 @@ $LogsRoot    = if ($env:TRANSCRIPTION_LOGS_DIR) { $env:TRANSCRIPTION_LOGS_DIR } 
 
 if (-not (Test-Whisper)) {
     Show-Header -Title "Farma: tryb workera" -Subtitle "BLAD: nie znaleziono whispera"
-    Write-Host "  Zainstaluj: " -NoNewline -ForegroundColor Red
-    Write-Host "pip install openai-whisper" -ForegroundColor Cyan
+    Write-Host "  Whisper nie jest zainstalowany." -ForegroundColor Red
+    Write-Host "  Uruchom instalator ponownie aby zainstalowac brakujace skladniki." -ForegroundColor Yellow
     $null = Read-Host "`n  Nacisnij Enter aby wrocic do menu"
     return
 }

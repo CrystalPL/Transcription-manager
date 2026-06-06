@@ -293,22 +293,6 @@ function Invoke-Dependencies {
         } catch { return $false }
     }
 
-    $sbWhisper = {
-        param($pyExe, $pipLog)
-        try {
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            $env:PYTHONHOME        = $null
-            $env:PYTHONPATH        = $null
-            $env:PYTHONUNBUFFERED  = '1'
-            $env:PYTHONIOENCODING  = 'utf-8'
-            & $pyExe -m pip install --upgrade openai-whisper --no-warn-script-location > $pipLog 2>&1
-            $scriptsDir = Join-Path (Split-Path $pyExe -Parent) "Scripts"
-            return (Test-Path (Join-Path $scriptsDir "whisper.exe"))
-        } catch {
-            Add-Content -Path $pipLog -Value "EXCEPTION: $_" -Encoding UTF8 -ErrorAction SilentlyContinue
-            return $false
-        }
-    }
 
     # Tabela postepu
     $w   = [Console]::WindowWidth
@@ -536,18 +520,38 @@ function Invoke-Dependencies {
             Render-ProgressRow $name $st[$name] $w
             [Console]::SetCursorPosition(0, $afterRow)
 
-            $pipLog = Join-Path $env:TEMP "tm-pip-whisper.log"
-            $pipJob = Start-Job -ScriptBlock $sbWhisper -ArgumentList $pyExe, $pipLog
-            while ($pipJob.State -eq 'Running') {
+            # Start-Process zamiast Start-Job: plik logu jest pisany bezposrednio przez
+            # python.exe (nie przez PS pipeline), wiec zawsze powstaje nawet gdy pip crashuje.
+            $pipLog    = Join-Path $env:TEMP "tm-pip-whisper.log"
+            $pipLogErr = Join-Path $env:TEMP "tm-pip-whisper.err"
+            $savedHome = $env:PYTHONHOME; $savedPath = $env:PYTHONPATH
+            $env:PYTHONHOME       = $null; $env:PYTHONPATH = $null
+            $env:PYTHONUNBUFFERED = '1';   $env:PYTHONIOENCODING = 'utf-8'
+
+            $proc = Start-Process -FilePath $pyExe `
+                -ArgumentList @('-m', 'pip', 'install', '--upgrade', 'openai-whisper', '--no-warn-script-location') `
+                -RedirectStandardOutput $pipLog `
+                -RedirectStandardError  $pipLogErr `
+                -NoNewWindow -PassThru
+
+            $env:PYTHONHOME = $savedHome; $env:PYTHONPATH = $savedPath
+
+            while (-not $proc.HasExited) {
                 [Console]::SetCursorPosition(0, $tableRow + $rowOf[$name])
                 Render-ProgressRow $name $st[$name] $w
                 [Console]::SetCursorPosition(0, $afterRow)
                 Start-Sleep -Milliseconds 500
             }
 
-            $whisperOk = Receive-Job -Job $pipJob -ErrorAction SilentlyContinue
-            Remove-Job -Job $pipJob -Force
-            $st[$name].Phase = if ($whisperOk -eq $true) { 'ok' } else { 'err' }
+            if (Test-Path $pipLogErr) {
+                $errContent = Get-Content $pipLogErr -Raw -ErrorAction SilentlyContinue
+                if ($errContent) { Add-Content -Path $pipLog -Value $errContent -Encoding UTF8 -ErrorAction SilentlyContinue }
+                Remove-Item $pipLogErr -Force -ErrorAction SilentlyContinue
+            }
+
+            $scriptsDir = Join-Path (Split-Path $pyExe -Parent) "Scripts"
+            $whisperOk  = ($proc.ExitCode -eq 0) -and (Test-Path (Join-Path $scriptsDir "whisper.exe"))
+            $st[$name].Phase = if ($whisperOk) { 'ok' } else { 'err' }
         }
 
         [Console]::SetCursorPosition(0, $tableRow + $rowOf[$name])

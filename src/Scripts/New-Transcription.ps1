@@ -16,10 +16,8 @@ $DefaultOut = if ($env:TRANSCRIPTION_OUTPUT_DIR) { $env:TRANSCRIPTION_OUTPUT_DIR
 
 if (-not (Test-Whisper)) {
     Show-Header -Title "Tworzenie transkrypcji" -Subtitle "BLAD: nie znaleziono whispera"
-    Write-Host "  Zainstaluj: " -NoNewline -ForegroundColor Red
-    Write-Host "pip install openai-whisper" -ForegroundColor Cyan
-    Write-Host "  Wymaga rowniez ffmpeg: " -NoNewline -ForegroundColor DarkGray
-    Write-Host "winget install Gyan.FFmpeg" -ForegroundColor Cyan
+    Write-Host "  Whisper nie jest zainstalowany." -ForegroundColor Red
+    Write-Host "  Uruchom instalator ponownie aby zainstalowac brakujace skladniki." -ForegroundColor Yellow
     $null = Read-Host "`n  Nacisnij Enter aby wrocic do menu"
     return
 }
