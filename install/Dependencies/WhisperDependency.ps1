@@ -1,4 +1,4 @@
-class WhisperDependency : Dependency {
+﻿class WhisperDependency : Dependency {
     WhisperDependency() {
         $this.Name             = "whisper"
         $this.Command          = "whisper"
@@ -21,7 +21,14 @@ class WhisperDependency : Dependency {
             return $false
         }
         Write-Host "        Instalacja openai-whisper (PyTorch ~2.5-3 GB)..." -ForegroundColor Yellow
-        & $py -m pip install --upgrade openai-whisper --no-warn-script-location
+        # try/catch: pip zapisuje bledy na stderr, ktory PS5.1 z ErrorActionPreference=Stop
+        # traktuje jako wyjatki — łapiemy zeby nie wywalac calego instalatora.
+        try {
+            & $py -m pip install --upgrade openai-whisper --no-warn-script-location
+        } catch {
+            Write-Host "        [FAIL] pip: $_" -ForegroundColor Red
+            return $false
+        }
         if ($LASTEXITCODE -ne 0) { return $false }
         return (Test-Path (Join-Path (Join-Path $RuntimeDir "python") "Scripts\whisper.exe"))
     }

@@ -6,12 +6,22 @@
     }
 
     hidden [string] LatestVersion() {
+        # Proba 1: GitLab API
         try {
             $resp = Invoke-RestMethod `
                 -Uri "https://gitlab.com/api/v4/projects/mbunkus%2Fmkvtoolnix/releases?per_page=1" `
                 -UseBasicParsing -Headers @{ "User-Agent" = "tm-installer" }
-            return $resp[0].tag_name -replace '^release-', ''
-        } catch { return $null }
+            $tag = if ($resp -and $resp.Count -gt 0) { $resp[0].tag_name } else { $null }
+            $ver = if ($tag) { $tag -replace '^release-', '' } else { $null }
+            if ($ver -match '^\d') { return $ver }
+        } catch {}
+        # Proba 2: scraping strony pobierania
+        try {
+            $page  = Invoke-WebRequest -Uri "https://mkvtoolnix.download/downloads.html" -UseBasicParsing
+            $match = [regex]::Match($page.Content, 'mkvtoolnix-64-bit-([\d.]+)\.7z')
+            if ($match.Success) { return $match.Groups[1].Value }
+        } catch {}
+        return $null
     }
 
     [string] GetPortableZipUrl() {
