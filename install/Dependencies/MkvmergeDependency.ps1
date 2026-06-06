@@ -5,6 +5,23 @@
         $this.SupportsPortable = $true
     }
 
+    hidden [string] LatestVersion() {
+        try {
+            $resp = Invoke-RestMethod `
+                -Uri "https://gitlab.com/api/v4/projects/mbunkus%2Fmkvtoolnix/releases?per_page=1" `
+                -UseBasicParsing -Headers @{ "User-Agent" = "tm-installer" }
+            return $resp[0].tag_name -replace '^release-', ''
+        } catch { return $null }
+    }
+
+    [string] GetPortableZipUrl() {
+        $ver = $this.LatestVersion()
+        if (-not $ver) { return $null }
+        return "https://mkvtoolnix.download/windows/releases/$ver/mkvtoolnix-64-bit-$ver.7z"
+    }
+
+    [string] GetPortableTempPath() { return (Join-Path $env:TEMP "tm-mkvtoolnix.7z") }
+
     [bool] Install() {
         if (-not (Get-Command "winget" -ErrorAction SilentlyContinue)) {
             Write-Host "        [FAIL] Wymagany winget." -ForegroundColor Red
@@ -14,40 +31,53 @@
         return $LASTEXITCODE -eq 0
     }
 
-    [bool] InstallPortable([string]$RuntimeDir) {
-        $dest = Join-Path $RuntimeDir "mkvtoolnix"
-        $zip  = Join-Path $env:TEMP "tm-mkvtoolnix.zip"
-        $tmp  = Join-Path $env:TEMP "tm-mkvtoolnix-extract"
-        $url  = "https://mkvtoolnix.download/windows/releases/latest/mkvtoolnix-64-bit-latest.7z"
-
+    [bool] InstallFromZip([string]$SevenZPath, [string]$RuntimeDir) {
+        $dest   = Join-Path $RuntimeDir "mkvtoolnix"
+        # Sciezka bez spacji — 7zr.exe wymaga -o bez odstepu przed sciezka
+        $tmpExt = Join-Path $env:SystemDrive "tm-mkv-x"
+        $7zrExe = Join-Path $env:TEMP "tm-7zr.exe"
         try {
-            Write-Host "        Pobieranie MKVToolNix portable (~40 MB)..." -ForegroundColor DarkGray
-            # mkvtoolnix portable jest dystrybuowany jako .7z; jesli brak 7z, sprobuj .zip mirror.
-            # Uzywamy oficjalnego ZIP-a portable z GitHub release przez API (asset *.zip).
-            $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/MoritzBunkus/mkvtoolnix-releases/releases/latest" -UseBasicParsing -Headers @{ "User-Agent" = "tm-installer" }
-            $asset = $rel.assets | Where-Object { $_.name -match 'win.*portable.*\.zip$' -or $_.name -match 'portable.*64.*\.zip$' } | Select-Object -First 1
-            if (-not $asset) { Write-Host "        [FAIL] Brak assetu portable .zip w release" -ForegroundColor Red; return $false }
-            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $zip -UseBasicParsing
+            if (-not (Test-Path $7zrExe)) {
+                Invoke-WebRequest -Uri "https://www.7-zip.org/a/7zr.exe" -OutFile $7zrExe -UseBasicParsing
+            }
 
-            if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-            Expand-Archive -Path $zip -DestinationPath $tmp -Force
+            if (Test-Path $tmpExt) { Remove-Item $tmpExt -Recurse -Force }
+            New-Item -ItemType Directory -Path $tmpExt -Force | Out-Null
 
-            $binSrc = Get-ChildItem $tmp -Recurse -Filter "mkvmerge.exe" | Select-Object -First 1
-            if (-not $binSrc) { Write-Host "        [FAIL] Brak mkvmerge.exe w archiwum" -ForegroundColor Red; return $false }
+            & $7zrExe x $SevenZPath "-o$tmpExt" -y | Out-Null
+            Remove-Item $SevenZPath  -Force -EA SilentlyContinue
+            Remove-Item $7zrExe      -Force -EA SilentlyContinue
+
+            $binSrc = Get-ChildItem $tmpExt -Recurse -Filter "mkvmerge.exe" | Select-Object -First 1
+            if (-not $binSrc) {
+                Write-Host "        [FAIL] Brak mkvmerge.exe po rozpakowaniu" -ForegroundColor Red
+                return $false
+            }
 
             $binDir = Split-Path $binSrc.FullName -Parent
             if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
             New-Item -ItemType Directory -Path $dest -Force | Out-Null
-            # Kopiujemy caly folder bin (mkvmerge wymaga towarzyszacych .dll/libów)
+            # Kopiujemy caly katalog — mkvmerge wymaga towarzyszacych .dll
             Copy-Item (Join-Path $binDir "*") -Destination $dest -Recurse -Force
+            Remove-Item $tmpExt -Recurse -Force -EA SilentlyContinue
 
-            Remove-Item $zip -Force -EA SilentlyContinue
-            Remove-Item $tmp -Recurse -Force -EA SilentlyContinue
             return (Test-Path (Join-Path $dest "mkvmerge.exe"))
         } catch {
             Write-Host "        [FAIL] mkvmerge portable: $_" -ForegroundColor Red
             return $false
         }
+    }
+
+    [bool] InstallPortable([string]$RuntimeDir) {
+        $url = $this.GetPortableZipUrl()
+        if (-not $url) {
+            Write-Host "        [FAIL] Nie mozna ustalic URL do mkvtoolnix." -ForegroundColor Red
+            return $false
+        }
+        $tmp = $this.GetPortableTempPath()
+        Write-Host "        Pobieranie MKVToolNix..." -ForegroundColor DarkGray
+        Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing
+        return $this.InstallFromZip($tmp, $RuntimeDir)
     }
 
     [hashtable] ManifestEntry([string]$Mode, [string]$RuntimeDir, [string]$InstallDir) {

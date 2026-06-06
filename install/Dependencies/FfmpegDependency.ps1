@@ -1,9 +1,15 @@
-﻿class FfmpegDependency : Dependency {
+class FfmpegDependency : Dependency {
     FfmpegDependency() {
         $this.Name             = "ffmpeg"
         $this.Command          = "ffmpeg"
         $this.SupportsPortable = $true
     }
+
+    [string] GetPortableZipUrl() {
+        return "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+    }
+
+    [string] GetPortableTempPath() { return (Join-Path $env:TEMP "tm-ffmpeg.zip") }
 
     [bool] Install() {
         if (-not (Get-Command "winget" -ErrorAction SilentlyContinue)) {
@@ -14,35 +20,40 @@
         return $LASTEXITCODE -eq 0
     }
 
-    [bool] InstallPortable([string]$RuntimeDir) {
+    [bool] InstallFromZip([string]$ZipPath, [string]$RuntimeDir) {
         $dest = Join-Path $RuntimeDir "ffmpeg"
-        $zip  = Join-Path $env:TEMP "tm-ffmpeg.zip"
         $tmp  = Join-Path $env:TEMP "tm-ffmpeg-extract"
-        $url  = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
-
         try {
-            Write-Host "        Pobieranie ffmpeg (~80 MB)..." -ForegroundColor DarkGray
-            Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
             if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-            Expand-Archive -Path $zip -DestinationPath $tmp -Force
+            Expand-Archive -Path $ZipPath -DestinationPath $tmp -Force
+            Remove-Item $ZipPath -Force -EA SilentlyContinue
 
-            # ZIP rozpakowuje sie do podfolderu ffmpeg-*-essentials_build\bin\ffmpeg.exe
+            # ZIP rozpakowuje sie do podfolderu ffmpeg-*-essentials_build\bin\
             $binSrc = Get-ChildItem $tmp -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
-            if (-not $binSrc) { Write-Host "        [FAIL] Brak ffmpeg.exe w archiwum" -ForegroundColor Red; return $false }
+            if (-not $binSrc) {
+                Write-Host "        [FAIL] Brak ffmpeg.exe w archiwum" -ForegroundColor Red
+                return $false
+            }
 
             $binDir = Split-Path $binSrc.FullName -Parent
             $destBin = Join-Path $dest "bin"
             if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
             New-Item -ItemType Directory -Path $destBin -Force | Out-Null
             Copy-Item (Join-Path $binDir "*.exe") -Destination $destBin -Force
-
-            Remove-Item $zip -Force -EA SilentlyContinue
             Remove-Item $tmp -Recurse -Force -EA SilentlyContinue
+
             return (Test-Path (Join-Path $destBin "ffmpeg.exe"))
         } catch {
             Write-Host "        [FAIL] ffmpeg portable: $_" -ForegroundColor Red
             return $false
         }
+    }
+
+    [bool] InstallPortable([string]$RuntimeDir) {
+        $zip = $this.GetPortableTempPath()
+        Write-Host "        Pobieranie ffmpeg (~80 MB)..." -ForegroundColor DarkGray
+        Invoke-WebRequest -Uri $this.GetPortableZipUrl() -OutFile $zip -UseBasicParsing
+        return $this.InstallFromZip($zip, $RuntimeDir)
     }
 
     [hashtable] ManifestEntry([string]$Mode, [string]$RuntimeDir, [string]$InstallDir) {

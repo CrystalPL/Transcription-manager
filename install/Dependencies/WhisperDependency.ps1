@@ -1,4 +1,4 @@
-﻿class WhisperDependency : Dependency {
+class WhisperDependency : Dependency {
     WhisperDependency() {
         $this.Name             = "whisper"
         $this.Command          = "whisper"
@@ -20,7 +20,7 @@
             Write-Host "        [FAIL] Brak portable Pythona ($py). Zainstaluj Python (portable) najpierw." -ForegroundColor Red
             return $false
         }
-        Write-Host "        Instalacja openai-whisper do portable Pythona (PyTorch ~2.5-3 GB)..." -ForegroundColor Yellow
+        Write-Host "        Instalacja openai-whisper (PyTorch ~2.5-3 GB)..." -ForegroundColor Yellow
         & $py -m pip install --upgrade openai-whisper --no-warn-script-location
         if ($LASTEXITCODE -ne 0) { return $false }
         return (Test-Path (Join-Path (Join-Path $RuntimeDir "python") "Scripts\whisper.exe"))
