@@ -21,7 +21,9 @@ jobs:
         id: ver
         shell: powershell
         run: |
-          $v = git describe --tags 2>$null
+          $ErrorActionPreference = 'Continue'
+          $v = git describe --tags 2>&1 | Where-Object { $_ -isnot [System.Management.Automation.ErrorRecord] }
+          $ErrorActionPreference = 'Stop'
           if ($LASTEXITCODE -ne 0) {
             $count = (git rev-list --count HEAD).Trim()
             $sha   = (git rev-parse --short HEAD).Trim()
