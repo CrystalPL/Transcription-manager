@@ -153,19 +153,27 @@ function Test-RealPython {
     return $true
 }
 
+function Test-WhisperPortable([string]$RuntimeDir) {
+    return (Test-Path (Join-Path $RuntimeDir "whisper-env\Scripts\whisper.exe")) -or
+           (Test-Path (Join-Path $RuntimeDir "python\Scripts\whisper.exe"))
+}
+
 function Test-AllDepsPresent([string]$InstallDir) {
     $RuntimeDir = Join-Path $InstallDir "runtime"
     $portableExes = @{
         'Python'   = Join-Path $RuntimeDir "python\python.exe"
         'ffmpeg'   = Join-Path $RuntimeDir "ffmpeg\bin\ffmpeg.exe"
         'mkvmerge' = Join-Path $RuntimeDir "mkvtoolnix\mkvmerge.exe"
-        'whisper'  = Join-Path $RuntimeDir "python\Scripts\whisper.exe"
     }
     $deps = @([PythonDependency]::new(), [FfmpegDependency]::new(), [MkvmergeDependency]::new(), [WhisperDependency]::new())
     foreach ($d in $deps) {
-        $present = (Test-Path $portableExes[$d.Name])
-        if (-not $present -and $d.Name -ne 'Python') { $present = $d.Test() }
-        if (-not $present -and $d.Name -eq 'Python') { $present = Test-RealPython }
+        if ($d.Name -eq 'whisper') {
+            $present = (Test-WhisperPortable $RuntimeDir) -or $d.Test()
+        } else {
+            $present = (Test-Path $portableExes[$d.Name])
+            if (-not $present -and $d.Name -ne 'Python') { $present = $d.Test() }
+            if (-not $present -and $d.Name -eq 'Python') { $present = Test-RealPython }
+        }
         if (-not $present) { return $false }
     }
     return $true
@@ -195,12 +203,16 @@ function Invoke-Dependencies {
         'Python'   = Join-Path $RuntimeDir "python\python.exe"
         'ffmpeg'   = Join-Path $RuntimeDir "ffmpeg\bin\ffmpeg.exe"
         'mkvmerge' = Join-Path $RuntimeDir "mkvtoolnix\mkvmerge.exe"
-        'whisper'  = Join-Path $RuntimeDir "python\Scripts\whisper.exe"
+        'whisper'  = $null
     }
     $portablePresent = @{}
     foreach ($dep in $deps) {
-        $exe = $portableExePaths[$dep.Name]
-        $portablePresent[$dep.Name] = ($null -ne $exe -and (Test-Path $exe))
+        if ($dep.Name -eq 'whisper') {
+            $portablePresent[$dep.Name] = Test-WhisperPortable $RuntimeDir
+        } else {
+            $exe = $portableExePaths[$dep.Name]
+            $portablePresent[$dep.Name] = ($null -ne $exe -and (Test-Path $exe))
+        }
     }
 
     Write-Step "[3/$Total] Sprawdzanie zaleznosci..."
@@ -597,8 +609,7 @@ function Invoke-Dependencies {
         if (-not (Test-Path $installPy)) {
             $st[$name].Phase = 'err'
         } else {
-            $st[$name].Phase     = 'pip'
-            $st[$name].StartedAt = Get-Date
+            $st[$name].Phase = 'pip'
             [Console]::SetCursorPosition(0, $tableRow + $rowOf[$name])
             Render-ProgressRow $name $st[$name] $w
             [Console]::SetCursorPosition(0, $afterRow)
@@ -634,6 +645,11 @@ function Invoke-Dependencies {
             if ($setupProc.ExitCode -gt 0) {
                 $st[$name].Phase = 'err'
             } else {
+                $st[$name].StartedAt = Get-Date
+                [Console]::SetCursorPosition(0, $tableRow + $rowOf[$name])
+                Render-ProgressRow $name $st[$name] $w
+                [Console]::SetCursorPosition(0, $afterRow)
+
                 $installArgs = @('-m', 'pip', 'install', '--upgrade', '--no-build-isolation', 'openai-whisper', '--no-warn-script-location')
                 Add-Content -Path $pipLog -Value "`n--- whisper pip: $($installArgs -join ' ') ---" -Encoding UTF8 -ErrorAction SilentlyContinue
 
@@ -678,7 +694,8 @@ function Invoke-Dependencies {
                 $rawEc = $jobResult | Where-Object { $_ -is [int] } | Select-Object -Last 1
                 $ec = if ($null -eq $rawEc) { 1 } else { [int]$rawEc }
 
-                $scriptsDir = Join-Path (Split-Path $installPy -Parent) "Scripts"
+                $pyParent   = Split-Path $installPy -Parent
+                $scriptsDir = if ($pyParent -like "*\Scripts") { $pyParent } else { Join-Path $pyParent "Scripts" }
                 $whisperExe = Join-Path $scriptsDir "whisper.exe"
                 Add-Content -Path $pipLog -Value "whisper.exe: $(if ($whisperExe -and (Test-Path $whisperExe)) { 'OK' } else { 'brak' })" -Encoding UTF8 -ErrorAction SilentlyContinue
 
