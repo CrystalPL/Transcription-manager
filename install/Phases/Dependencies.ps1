@@ -13,15 +13,16 @@
 }
 
 function Show-DepsConfig {
-    param([object[]]$Deps)
+    param([object[]]$Deps, [hashtable]$PortablePresent = @{})
 
     $labels = @{ reuse = 'Zachowaj'; system = 'Systemowo'; portable = 'Portable' }
 
     $rows = @()
     foreach ($dep in $Deps) {
-        $detected = $dep.Test()
+        $detected  = $dep.Test()
+        $hasPortable = $PortablePresent[$dep.Name] -eq $true
         $modes = if ($dep.SupportsPortable) {
-            if ($detected) { @('reuse', 'system', 'portable') } else { @('system', 'portable') }
+            if ($hasPortable -or $detected) { @('reuse', 'system', 'portable') } else { @('system', 'portable') }
         } else {
             if ($detected) { @('reuse', 'system') } else { @('system') }
         }
@@ -186,7 +187,19 @@ function Invoke-Dependencies {
     $manifest    = @{}
     $needRuntime = $false
 
-    $tasks = Show-DepsConfig $deps
+    $portableExePaths = @{
+        'Python'   = Join-Path $RuntimeDir "python\python.exe"
+        'ffmpeg'   = Join-Path $RuntimeDir "ffmpeg\bin\ffmpeg.exe"
+        'mkvmerge' = Join-Path $RuntimeDir "mkvtoolnix\mkvmerge.exe"
+        'whisper'  = Join-Path $RuntimeDir "python\Scripts\whisper.exe"
+    }
+    $portablePresent = @{}
+    foreach ($dep in $deps) {
+        $exe = $portableExePaths[$dep.Name]
+        $portablePresent[$dep.Name] = ($null -ne $exe -and (Test-Path $exe))
+    }
+
+    $tasks = Show-DepsConfig $deps $portablePresent
 
     $sbPython = {
         param($zipPath, $runtimeDir)
@@ -429,7 +442,12 @@ function Invoke-Dependencies {
         $name = $dep.Name
         switch ($t.Mode) {
             'reuse' {
-                $manifest[$dep.Command] = $dep.ManifestEntry('system', $RuntimeDir, $InstallDir)
+                if ($portablePresent[$dep.Name]) {
+                    $manifest[$dep.Command] = $dep.ManifestEntry('portable', $RuntimeDir, $InstallDir)
+                    $needRuntime = $true
+                } else {
+                    $manifest[$dep.Command] = $dep.ManifestEntry('system', $RuntimeDir, $InstallDir)
+                }
             }
             'system' {
                 $st[$name].Phase     = 'inst'
@@ -591,7 +609,16 @@ function Invoke-Dependencies {
                         $sr.Close(); $fs.Close()
                         $idx = $raw.LastIndexOf('--- whisper pip')
                         $pip = if ($idx -ge 0) { $raw.Substring($idx) } else { '' }
-                        $ll  = ($pip -split "`n" | Where-Object { $_.Trim() -ne '' -and -not $_.TrimStart().StartsWith('---') } | Select-Object -Last 1)
+                        $ll  = ($pip -split "`n" | Where-Object {
+                            $l = $_.Trim()
+                            $l -ne '' -and
+                            -not $l.StartsWith('---') -and
+                            -not $l.StartsWith('Successfully uninstalled') -and
+                            -not $l.StartsWith('Uninstalling ') -and
+                            -not $l.StartsWith('Found existing installation') -and
+                            -not $l.StartsWith('DEPRECATION') -and
+                            -not $l.StartsWith('WARNING')
+                        } | Select-Object -Last 1)
                         if ($ll) { $st[$name].LastLine = $ll.Trim() }
                     } catch {}
 
