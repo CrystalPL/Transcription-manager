@@ -1,7 +1,7 @@
 ﻿function Invoke-CopyApp {
-    param([string]$RepoRoot, [string]$InstallDir)
+    param([string]$RepoRoot, [string]$InstallDir, [int]$Total = 5)
 
-    Write-Step "[2/5] Kopiowanie aplikacji..."
+    Write-Step "[2/$Total] Kopiowanie aplikacji..."
 
     $srcDir = Join-Path $RepoRoot "src"
     if (-not (Test-Path $srcDir)) {

@@ -148,11 +148,27 @@ function Render-ProgressRow {
     Write-Host ""
 }
 
+function Test-AllDepsPresent([string]$InstallDir) {
+    $RuntimeDir = Join-Path $InstallDir "runtime"
+    $portableExes = @{
+        'Python'   = Join-Path $RuntimeDir "python\python.exe"
+        'ffmpeg'   = Join-Path $RuntimeDir "ffmpeg\bin\ffmpeg.exe"
+        'mkvmerge' = Join-Path $RuntimeDir "mkvtoolnix\mkvmerge.exe"
+        'whisper'  = Join-Path $RuntimeDir "python\Scripts\whisper.exe"
+    }
+    $deps = @([PythonDependency]::new(), [FfmpegDependency]::new(), [MkvmergeDependency]::new(), [WhisperDependency]::new())
+    foreach ($d in $deps) {
+        if (-not ($d.Test() -or (Test-Path $portableExes[$d.Name]))) { return $false }
+    }
+    return $true
+}
+
 function Invoke-Dependencies {
     param(
         [switch]$NoDeps,
         [string]$InstallDir,
-        [string]$LogDir
+        [string]$LogDir,
+        [int]$Total = 5
     )
     if (-not $LogDir) { $LogDir = $env:TEMP }
 
@@ -179,7 +195,7 @@ function Invoke-Dependencies {
         $portablePresent[$dep.Name] = ($null -ne $exe -and (Test-Path $exe))
     }
 
-    Write-Step "[3/5] Sprawdzanie zaleznosci..."
+    Write-Step "[3/$Total] Sprawdzanie zaleznosci..."
     foreach ($d in $deps) {
         if ($d.Test() -or $portablePresent[$d.Name]) { Write-OK $d.Name } else { Write-Missing $d.Name }
     }
@@ -194,11 +210,9 @@ function Invoke-Dependencies {
     }
 
     if ($NoDeps) {
-        Write-Step "[4/5] Instalacja zaleznosci pominieta (-NoDeps)"
+        Write-Step "[4/$Total] Instalacja zaleznosci pominieta (-NoDeps)"
         return
     }
-
-    Write-Step "[4/5] Instalowanie zaleznosci..."
 
     $autoTasks  = [System.Collections.ArrayList]::new()
     $configDeps = @()
@@ -211,9 +225,11 @@ function Invoke-Dependencies {
     }
 
     if ($configDeps.Count -gt 0) {
+        Write-Step "[4/$Total] Instalowanie zaleznosci..."
         $userTasks = Show-DepsConfig $configDeps $portablePresent
         $tasks = @($autoTasks) + @($userTasks)
     } else {
+        Write-Step "[4/5] Zaleznosci aktualne"
         $tasks = @($autoTasks)
     }
 
@@ -682,6 +698,46 @@ function Invoke-Dependencies {
         }
 
         if ($st[$name].Phase -eq 'ok') {
+            $modelsDir   = Join-Path $InstallDir "models"
+            New-Item -ItemType Directory -Force -Path $modelsDir -ErrorAction SilentlyContinue | Out-Null
+            $modelLogErr = Join-Path $LogDir "whisper-model.err"
+            $modelScript = Join-Path $env:TEMP "tm-model-dl.py"
+            Set-Content -Path $modelScript -Value "import whisper; whisper.load_model('medium', download_root=r'$modelsDir')" -Encoding UTF8
+
+            $st[$name].Phase     = 'inst'
+            $st[$name].LastLine  = "Pobieranie modelu medium (~1.5 GB)..."
+            $st[$name].StartedAt = Get-Date
+            [Console]::SetCursorPosition(0, $tableRow + $rowOf[$name])
+            Render-ProgressRow $name $st[$name] $w
+            [Console]::SetCursorPosition(0, $afterRow)
+
+            $modelProc = Start-Process -FilePath $pyExe -ArgumentList @($modelScript) `
+                -RedirectStandardError $modelLogErr -NoNewWindow -PassThru -ErrorAction SilentlyContinue
+
+            if ($modelProc) {
+                while (-not $modelProc.HasExited) {
+                    try {
+                        $fs  = [System.IO.File]::Open($modelLogErr, 'Open', 'Read', 'ReadWrite')
+                        $sr  = New-Object System.IO.StreamReader($fs)
+                        $raw = $sr.ReadToEnd()
+                        $sr.Close(); $fs.Close()
+                        $ll  = ($raw -split "`r") | Where-Object { $_.Trim() -ne '' } | Select-Object -Last 1
+                        if ($ll) { $st[$name].LastLine = $ll.Trim() }
+                    } catch {}
+                    [Console]::SetCursorPosition(0, $tableRow + $rowOf[$name])
+                    Render-ProgressRow $name $st[$name] $w
+                    [Console]::SetCursorPosition(0, $afterRow)
+                    Start-Sleep -Milliseconds 500
+                }
+                $modelProc.WaitForExit()
+            }
+
+            Remove-Item $modelScript -Force -ErrorAction SilentlyContinue
+            $st[$name].Phase = 'ok'
+            [Console]::SetCursorPosition(0, $tableRow + $rowOf[$name])
+            Render-ProgressRow $name $st[$name] $w
+            [Console]::SetCursorPosition(0, $afterRow)
+
             $manifest[$dep.Command] = $dep.ManifestEntry('portable', $RuntimeDir, $InstallDir)
             $needRuntime = $true
         }
@@ -692,7 +748,7 @@ function Invoke-Dependencies {
     if ($manifest.Count -gt 0) {
         $runtimeFile = Join-Path $InstallDir "runtime.json"
         [PSCustomObject]$manifest | ConvertTo-Json -Depth 5 | Set-Content -Path $runtimeFile -Encoding UTF8
-        Write-OK "Zapisano manifest: $runtimeFile"
+        if ($installTasks.Count -gt 0) { Write-OK "Zapisano manifest: $runtimeFile" }
     }
 
     if (-not $needRuntime) {

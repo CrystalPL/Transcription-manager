@@ -92,16 +92,21 @@ function Start-WhisperJob {
     $errFile = $State.LogFile + ".err"
     $State.ErrFile = $errFile
 
+    $device     = if (Get-Command "nvidia-smi" -ErrorAction SilentlyContinue) { "cuda" } else { "cpu" }
+    $fp16Actual = if ($device -eq "cpu") { "False" } else { $Fp16Val }
+    $modelsDir  = Join-Path (Get-RuntimeRoot) "models"
+
     $argList = @(
         "`"$($State.Path)`""
         "--language", $Language
         "--model", $Model
-        "--device", "cuda"
-        "--fp16", $Fp16Val
+        "--device", $device
+        "--fp16", $fp16Actual
         "--output_format", "all"
         "--output_dir", "`"$fileOutputDir`""
         "--verbose", "True"
     )
+    if (Test-Path $modelsDir) { $argList += "--model_dir", "`"$modelsDir`"" }
 
     try {
         $proc = Start-Process -FilePath "whisper" `

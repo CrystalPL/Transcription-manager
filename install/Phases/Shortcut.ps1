@@ -1,7 +1,7 @@
 ﻿function Invoke-Shortcut {
-    param([string]$InstallDir, [switch]$NoShortcut)
+    param([string]$InstallDir, [switch]$NoShortcut, [int]$Total = 5)
 
-    Write-Step "[5/5] Tworzenie skrótów..."
+    Write-Step "[$Total/$Total] Tworzenie skrótów..."
 
     if ($NoShortcut) {
         Write-Skip "NoShortcut — pominięto"

@@ -21,13 +21,15 @@
     Write-Host "`n  Folder instalacji: " -NoNewline -ForegroundColor DarkGray
     Write-Host $InstallDir -ForegroundColor Cyan
 
-    Invoke-SystemCheck
-    Invoke-CopyApp      -RepoRoot $RepoRoot -InstallDir $InstallDir
+    $total = if (-not $NoDeps -and -not (Test-AllDepsPresent $InstallDir)) { 5 } else { 4 }
+
+    Invoke-SystemCheck  -Total $total
+    Invoke-CopyApp      -RepoRoot $RepoRoot -InstallDir $InstallDir -Total $total
 
     $LogDir = Join-Path $InstallDir "logs\$(Get-Date -Format 'yyyyMMdd')"
     try { New-Item -ItemType Directory -Path $LogDir -Force -ErrorAction Stop | Out-Null } catch { $LogDir = $env:TEMP }
-    Invoke-Dependencies -NoDeps:$NoDeps -InstallDir $InstallDir -LogDir $LogDir
-    Invoke-Shortcut     -InstallDir $InstallDir -NoShortcut:$NoShortcut
+    Invoke-Dependencies -NoDeps:$NoDeps -InstallDir $InstallDir -LogDir $LogDir -Total $total
+    Invoke-Shortcut     -InstallDir $InstallDir -NoShortcut:$NoShortcut -Total $total
 
     Show-Summary -InstallDir $InstallDir -LogFile (Join-Path $LogDir "install.log")
     return $LogDir

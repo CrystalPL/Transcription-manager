@@ -1,5 +1,6 @@
 ﻿function Invoke-SystemCheck {
-    Write-Step "[1/5] Sprawdzanie systemu..."
+    param([int]$Total = 5)
+    Write-Step "[1/$Total] Sprawdzanie systemu..."
 
     $winVer = [System.Environment]::OSVersion.Version
     if ($winVer.Major -lt 10) {
