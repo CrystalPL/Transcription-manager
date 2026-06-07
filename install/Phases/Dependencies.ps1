@@ -551,7 +551,7 @@ function Invoke-Dependencies {
                 # wiec zawsze powstaje nawet gdy pip crashuje.
                 $pipLogTmp = "$pipLog.tmp"
                 $proc = Start-Process -FilePath $pyExe `
-                    -ArgumentList @('-m', 'pip', 'install', '--upgrade', 'openai-whisper', '--no-warn-script-location') `
+                    -ArgumentList @('-m', 'pip', 'install', '--upgrade', '--no-build-isolation', 'openai-whisper', '--no-warn-script-location') `
                     -RedirectStandardOutput $pipLogTmp `
                     -RedirectStandardError  $pipLogErr `
                     -NoNewWindow -PassThru
