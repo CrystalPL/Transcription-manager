@@ -2,7 +2,7 @@
     param([hashtable]$Row, [bool]$IsSelected, [int]$Width, [hashtable]$Labels)
     $marker   = if ($IsSelected) { "> " } else { "  " }
     $name     = $Row.Dep.Name.PadRight(12)
-    $stateStr = if ($Row.Detected) { "wykryto" } else { "brak" }
+    $stateStr = if ($Row.Detected) { "wykryto" } elseif ($Row.HasPortable) { "portable" } else { "brak" }
     $state    = $stateStr.PadRight(10)
     $mode     = $Labels[$Row.Modes[$Row.Idx]]
     $modeStr  = "[ <- $($mode.PadRight(16)) -> ]"
@@ -26,7 +26,7 @@ function Show-DepsConfig {
         } else {
             if ($detected) { @('reuse', 'system') } else { @('system') }
         }
-        $rows += @{ Dep = $dep; Detected = $detected; Modes = $modes; Idx = 0 }
+        $rows += @{ Dep = $dep; Detected = $detected; HasPortable = $hasPortable; Modes = $modes; Idx = 0 }
     }
 
     $sel = 0
@@ -199,7 +199,22 @@ function Invoke-Dependencies {
         $portablePresent[$dep.Name] = ($null -ne $exe -and (Test-Path $exe))
     }
 
-    $tasks = Show-DepsConfig $deps $portablePresent
+    $autoTasks  = [System.Collections.ArrayList]::new()
+    $configDeps = @()
+    foreach ($dep in $deps) {
+        if ($dep.Test() -or $portablePresent[$dep.Name]) {
+            [void]$autoTasks.Add(@{ Dep = $dep; Mode = 'reuse'; ZipDest = $null })
+        } else {
+            $configDeps += $dep
+        }
+    }
+
+    if ($configDeps.Count -gt 0) {
+        $userTasks = Show-DepsConfig $configDeps $portablePresent
+        $tasks = @($autoTasks) + @($userTasks)
+    } else {
+        $tasks = @($autoTasks)
+    }
 
     $sbPython = {
         param($zipPath, $runtimeDir)
@@ -317,33 +332,40 @@ function Invoke-Dependencies {
     $w   = [Console]::WindowWidth
     $sep = "  " + ("-" * [Math]::Min($w - 4, 62))
 
-    Write-Host ""
-    Write-Host "  Instalowanie skladnikow..." -ForegroundColor Cyan
-    Write-Host ""
-    Write-Host ("  {0,-10} {1,-12}  {2}" -f "Komponent", "Status", "Postep") -ForegroundColor DarkGray
-    Write-Host $sep -ForegroundColor DarkGray
+    $installTasks = @($tasks | Where-Object { $_.Mode -ne 'reuse' })
 
     $st       = @{}
     $rowOf    = @{}
-    $tableRow = [Console]::CursorTop
-    $ri       = 0
-
-    foreach ($t in $tasks) {
-        $initPhase = if ($t.Mode -eq 'reuse') { 'skip' } else { 'wait-dl' }
-        $st[$t.Dep.Name] = @{ Phase = $initPhase; Pct = 0; DlBytes = 0L; TotalBytes = 0L; StartedAt = $null }
-        $rowOf[$t.Dep.Name] = $ri; $ri++
-        Write-Host ""
-    }
-
-    Write-Host $sep -ForegroundColor DarkGray
-    $timerRow = [Console]::CursorTop; Write-Host ""
+    $tableRow = 0
+    $timerRow = 0
     $afterRow = [Console]::CursorTop
 
-    foreach ($t in $tasks) {
-        [Console]::SetCursorPosition(0, $tableRow + $rowOf[$t.Dep.Name])
-        Render-ProgressRow $t.Dep.Name $st[$t.Dep.Name] $w
+    if ($installTasks.Count -gt 0) {
+        Write-Host ""
+        Write-Host "  Instalowanie skladnikow..." -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host ("  {0,-10} {1,-12}  {2}" -f "Komponent", "Status", "Postep") -ForegroundColor DarkGray
+        Write-Host $sep -ForegroundColor DarkGray
+
+        $tableRow = [Console]::CursorTop
+        $ri       = 0
+
+        foreach ($t in $installTasks) {
+            $st[$t.Dep.Name] = @{ Phase = 'wait-dl'; Pct = 0; DlBytes = 0L; TotalBytes = 0L; StartedAt = $null }
+            $rowOf[$t.Dep.Name] = $ri; $ri++
+            Write-Host ""
+        }
+
+        Write-Host $sep -ForegroundColor DarkGray
+        $timerRow = [Console]::CursorTop; Write-Host ""
+        $afterRow = [Console]::CursorTop
+
+        foreach ($t in $installTasks) {
+            [Console]::SetCursorPosition(0, $tableRow + $rowOf[$t.Dep.Name])
+            Render-ProgressRow $t.Dep.Name $st[$t.Dep.Name] $w
+        }
+        [Console]::SetCursorPosition(0, $afterRow)
     }
-    [Console]::SetCursorPosition(0, $afterRow)
 
     $dlJobs = @{}
 
