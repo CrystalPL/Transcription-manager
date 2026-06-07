@@ -566,7 +566,12 @@ function Invoke-Dependencies {
         $dep  = $whisperTask.Dep
         $name = $dep.Name
         if (-not (Test-Path $RuntimeDir)) { New-Item -ItemType Directory -Path $RuntimeDir -Force | Out-Null }
-        $pyExe = Join-Path $RuntimeDir "python\python.exe"
+        $pyExe     = Join-Path $RuntimeDir "python\python.exe"
+        $portablePy = Test-Path $pyExe
+        if (-not $portablePy) {
+            $pyCmd = Get-Command "python" -ErrorAction SilentlyContinue
+            if ($pyCmd) { $pyExe = $pyCmd.Source }
+        }
 
         if (-not (Test-Path $pyExe)) {
             $st[$name].Phase = 'err'
@@ -674,9 +679,13 @@ function Invoke-Dependencies {
 
                 $scriptsDir = Join-Path (Split-Path $pyExe -Parent) "Scripts"
                 $whisperExe = Join-Path $scriptsDir "whisper.exe"
-                Add-Content -Path $pipLog -Value "whisper.exe: $(if (Test-Path $whisperExe) { 'OK' } else { 'brak' })" -Encoding UTF8 -ErrorAction SilentlyContinue
+                if (-not (Test-Path $whisperExe)) {
+                    $wCmd = Get-Command "whisper" -ErrorAction SilentlyContinue
+                    if ($wCmd) { $whisperExe = $wCmd.Source }
+                }
+                Add-Content -Path $pipLog -Value "whisper.exe: $(if ($whisperExe -and (Test-Path $whisperExe)) { 'OK' } else { 'brak' })" -Encoding UTF8 -ErrorAction SilentlyContinue
 
-                $whisperOk  = ($ec -eq 0) -and (Test-Path $whisperExe)
+                $whisperOk  = ($ec -eq 0) -and $whisperExe -and (Test-Path $whisperExe)
                 $st[$name].Phase = if ($whisperOk) { 'ok' } else { 'err' }
             }
         }
@@ -738,8 +747,12 @@ function Invoke-Dependencies {
             Render-ProgressRow $name $st[$name] $w
             [Console]::SetCursorPosition(0, $afterRow)
 
-            $manifest[$dep.Command] = $dep.ManifestEntry('portable', $RuntimeDir, $InstallDir)
-            $needRuntime = $true
+            if ($portablePy) {
+                $manifest[$dep.Command] = $dep.ManifestEntry('portable', $RuntimeDir, $InstallDir)
+                $needRuntime = $true
+            } else {
+                $manifest[$dep.Command] = $dep.ManifestEntry('system', $RuntimeDir, $InstallDir)
+            }
         }
     }
 
