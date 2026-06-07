@@ -543,7 +543,7 @@ function Invoke-Dependencies {
                 }
             }
 
-            if ($setupProc.ExitCode -ne 0) {
+            if ($setupProc.ExitCode -gt 0) {
                 $st[$name].Phase = 'err'
             } else {
                 $installArgs = @('-m', 'pip', 'install', '--upgrade', '--no-build-isolation', 'openai-whisper', '--no-warn-script-location')
