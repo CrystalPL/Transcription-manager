@@ -13,6 +13,17 @@
 function Show-DepsConfig {
     param([object[]]$Deps, [hashtable]$PortablePresent = @{})
 
+    $interactive = $true
+    try { $interactive = [Environment]::UserInteractive } catch {}
+    if (-not $interactive) {
+        $auto = [System.Collections.ArrayList]::new()
+        foreach ($dep in $Deps) {
+            $mode = if ($dep.SupportsPortable) { 'portable' } else { 'system' }
+            [void]$auto.Add(@{ Dep = $dep; Mode = $mode; ZipDest = $null })
+        }
+        return $auto
+    }
+
     $labels = @{ reuse = 'Zachowaj'; system = 'Systemowo'; portable = 'Portable' }
 
     $rows = @()
@@ -187,6 +198,14 @@ function Invoke-Dependencies {
         [int]$Total = 5
     )
     if (-not $LogDir) { $LogDir = $env:TEMP }
+
+    $DL_STALL_SEC        = 90
+    $DL_TIMEOUT_SEC      = 1200
+    $EXTRACT_TIMEOUT_SEC = 900
+    $SETUP_TIMEOUT_SEC   = 600
+    $PIP_TIMEOUT_SEC     = 2700
+    $MODEL_STALL_SEC     = 240
+    $MODEL_TIMEOUT_SEC   = 5400
 
     $deps = @(
         [PythonDependency]::new(),
@@ -427,40 +446,52 @@ function Invoke-Dependencies {
 
         $captUrl  = $url
         $captDest = $dest
-        $job = Start-Job -ScriptBlock {
+        $tracked = Start-TrackedJob -ScriptBlock {
             param($u, $d)
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
             (New-Object System.Net.WebClient).DownloadFile($u, $d)
-        } -ArgumentList $captUrl, $captDest
-        $dlJobs[$t.Dep.Name] = @{ Job = $job; Dest = $dest }
+        } -ArgumentList @($captUrl, $captDest)
+        $dlJobs[$t.Dep.Name] = @{ Tracked = $tracked; Dest = $dest; Start = (Get-Date); LastSize = -1L; LastChange = (Get-Date) }
     }
 
     if ($dlJobs.Count -gt 0) {
         $dlStart = Get-Date
         $dlDone  = @{}
-        while ($dlJobs.Values | Where-Object { $_.Job.State -eq 'Running' }) {
+        while (@($dlJobs.Keys | Where-Object { -not $dlDone[$_] }).Count -gt 0) {
             $elapsed    = [int]((Get-Date) - $dlStart).TotalSeconds
             $elapsedStr = "{0}:{1:D2}" -f [int]($elapsed / 60), ($elapsed % 60)
-            foreach ($nm in $dlJobs.Keys) {
+            foreach ($nm in @($dlJobs.Keys)) {
                 if ($dlDone[$nm]) { continue }
-                $djob = $dlJobs[$nm].Job
+                $info = $dlJobs[$nm]
+                $djob = $info.Tracked.Job
+                $now  = Get-Date
+
                 if ($djob.State -eq 'Running') {
-                    $dl  = if (Test-Path $dlJobs[$nm].Dest) { (Get-Item $dlJobs[$nm].Dest).Length } else { 0L }
+                    $dl  = if (Test-Path $info.Dest) { (Get-Item $info.Dest).Length } else { 0L }
                     $tot = $st[$nm].TotalBytes
                     $st[$nm].DlBytes = $dl
                     $st[$nm].Pct     = if ($tot -gt 0) { [int]($dl * 100 / $tot) } else { 0 }
+
+                    if ($dl -ne $info.LastSize) { $info.LastSize = $dl; $info.LastChange = $now }
+                    $stalled = (($now - $info.LastChange).TotalSeconds) -ge $DL_STALL_SEC
+                    $expired = (($now - $info.Start).TotalSeconds) -ge $DL_TIMEOUT_SEC
+                    if ($stalled -or $expired) {
+                        Stop-TrackedJob -Tracked $info.Tracked
+                        $st[$nm].Phase = 'err'
+                        $dlDone[$nm] = $true
+                    }
                 } else {
                     $null = Receive-Job -Job $djob -ErrorAction SilentlyContinue
                     if ($djob.State -eq 'Failed') {
                         $st[$nm].Phase = 'err'
                     } else {
-                        $dl = if (Test-Path $dlJobs[$nm].Dest) { (Get-Item $dlJobs[$nm].Dest).Length } else { $st[$nm].TotalBytes }
+                        $dl = if (Test-Path $info.Dest) { (Get-Item $info.Dest).Length } else { $st[$nm].TotalBytes }
                         $st[$nm].DlBytes  = $dl
                         if ($st[$nm].TotalBytes -eq 0L) { $st[$nm].TotalBytes = $dl }
                         $st[$nm].Pct   = 100
                         $st[$nm].Phase = 'wait-in'
                     }
-                    Remove-Job -Job $djob -Force
+                    Stop-TrackedJob -Tracked $info.Tracked
                     $dlDone[$nm] = $true
                 }
                 [Console]::SetCursorPosition(0, $tableRow + $rowOf[$nm])
@@ -469,24 +500,6 @@ function Invoke-Dependencies {
             [Console]::SetCursorPosition(0, $timerRow)
             Write-Host ("  Czas pobierania: $elapsedStr").PadRight($w - 1) -ForegroundColor DarkGray -NoNewline
             Start-Sleep -Milliseconds 300
-        }
-
-        foreach ($nm in $dlJobs.Keys) {
-            if ($dlDone[$nm]) { continue }
-            $dj = $dlJobs[$nm]
-            $null = Receive-Job -Job $dj.Job -ErrorAction SilentlyContinue
-            if ($dj.Job.State -eq 'Failed') {
-                $st[$nm].Phase = 'err'
-            } else {
-                $dl = if (Test-Path $dj.Dest) { (Get-Item $dj.Dest).Length } else { $st[$nm].TotalBytes }
-                $st[$nm].DlBytes  = $dl
-                if ($st[$nm].TotalBytes -eq 0L) { $st[$nm].TotalBytes = $dl }
-                $st[$nm].Pct   = 100
-                $st[$nm].Phase = 'wait-in'
-            }
-            Remove-Job -Job $dj.Job -Force
-            [Console]::SetCursorPosition(0, $tableRow + $rowOf[$nm])
-            Render-ProgressRow $nm $st[$nm] $w
         }
 
         [Console]::SetCursorPosition(0, $timerRow)
@@ -550,35 +563,40 @@ function Invoke-Dependencies {
         [Console]::SetCursorPosition(0, $tableRow + $rowOf[$name])
         Render-ProgressRow $name $st[$name] $w
 
-        $portableJobs[$name] = @{ Job = Start-Job -ScriptBlock $sb -ArgumentList $sbArgList; Dep = $dep }
+        $portableJobs[$name] = @{ Tracked = (Start-TrackedJob -ScriptBlock $sb -ArgumentList $sbArgList); Dep = $dep; Start = (Get-Date) }
     }
     [Console]::SetCursorPosition(0, $afterRow)
 
-    while ($portableJobs.Values | Where-Object { $_.Job.State -eq 'Running' }) {
-        foreach ($nm in $portableJobs.Keys) {
-            if ($portableJobs[$nm].Job.State -ne 'Running') { continue }
+    $portDone = @{}
+    while (@($portableJobs.Keys | Where-Object { -not $portDone[$_] }).Count -gt 0) {
+        foreach ($nm in @($portableJobs.Keys)) {
+            if ($portDone[$nm]) { continue }
+            $pj  = $portableJobs[$nm]
+            $ij  = $pj.Tracked.Job
+            $dep = $pj.Dep
+
+            if ($ij.State -eq 'Running') {
+                if ((((Get-Date) - $pj.Start).TotalSeconds) -ge $EXTRACT_TIMEOUT_SEC) {
+                    Stop-TrackedJob -Tracked $pj.Tracked
+                    $st[$nm].Phase = 'err'
+                    $portDone[$nm] = $true
+                }
+            } else {
+                $result = Receive-Job -Job $ij -ErrorAction SilentlyContinue
+                $ok     = ($ij.State -ne 'Failed') -and ($result -eq $true)
+                Stop-TrackedJob -Tracked $pj.Tracked
+                $st[$nm].Phase = if ($ok) { 'ok' } else { 'err' }
+                if ($ok) {
+                    $manifest[$dep.Command] = $dep.ManifestEntry('portable', $RuntimeDir, $InstallDir)
+                    $needRuntime = $true
+                }
+                $portDone[$nm] = $true
+            }
             [Console]::SetCursorPosition(0, $tableRow + $rowOf[$nm])
             Render-ProgressRow $nm $st[$nm] $w
         }
         [Console]::SetCursorPosition(0, $afterRow)
         Start-Sleep -Milliseconds 400
-    }
-
-    foreach ($nm in $portableJobs.Keys) {
-        $ij  = $portableJobs[$nm].Job
-        $dep = $portableJobs[$nm].Dep
-        $result = Receive-Job -Job $ij -ErrorAction SilentlyContinue
-        $ok     = ($ij.State -ne 'Failed') -and ($result -eq $true)
-        Remove-Job -Job $ij -Force
-
-        $st[$nm].Phase = if ($ok) { 'ok' } else { 'err' }
-        [Console]::SetCursorPosition(0, $tableRow + $rowOf[$nm])
-        Render-ProgressRow $nm $st[$nm] $w
-
-        if ($ok) {
-            $manifest[$dep.Command] = $dep.ManifestEntry('portable', $RuntimeDir, $InstallDir)
-            $needRuntime = $true
-        }
     }
     [Console]::SetCursorPosition(0, $afterRow)
 
@@ -631,9 +649,10 @@ function Invoke-Dependencies {
                 -ArgumentList @('-m', 'pip', 'install', '--upgrade', 'setuptools', 'wheel', '--no-warn-script-location') `
                 -RedirectStandardOutput $setupOut -RedirectStandardError $setupErr `
                 -NoNewWindow -PassThru
-            $setupProc.WaitForExit()
+            $setupRes  = Wait-GuardedProcess -Process $setupProc -TimeoutSec $SETUP_TIMEOUT_SEC
+            $setupExit = if ($setupRes.Completed) { $setupProc.ExitCode } else { 1 }
             $env:PYTHONHOME = $savedHome; $env:PYTHONPATH = $savedPath
-            Add-Content -Path $pipLog -Value "setuptools exit=$($setupProc.ExitCode)" -Encoding UTF8 -ErrorAction SilentlyContinue
+            Add-Content -Path $pipLog -Value "setuptools exit=$setupExit ($($setupRes.Reason))" -Encoding UTF8 -ErrorAction SilentlyContinue
             foreach ($tf in @($setupOut, $setupErr)) {
                 if (Test-Path $tf) {
                     $tc = Get-Content $tf -Raw -ErrorAction SilentlyContinue
@@ -642,7 +661,7 @@ function Invoke-Dependencies {
                 }
             }
 
-            if ($setupProc.ExitCode -gt 0) {
+            if ($setupExit -gt 0) {
                 $st[$name].Phase = 'err'
             } else {
                 $st[$name].StartedAt = Get-Date
@@ -652,47 +671,36 @@ function Invoke-Dependencies {
 
                 $installArgs = @('-m', 'pip', 'install', '--upgrade', '--no-build-isolation', 'openai-whisper', '--no-warn-script-location')
                 Add-Content -Path $pipLog -Value "`n--- whisper pip: $($installArgs -join ' ') ---" -Encoding UTF8 -ErrorAction SilentlyContinue
+                Add-Content -Path $pipLog -Value "start: $((Get-Date).ToString('HH:mm:ss'))" -Encoding UTF8 -ErrorAction SilentlyContinue
 
-                $captPy   = $installPy
-                $captLog  = $pipLog
-                $captArgs = $installArgs
-                $pipJob = Start-Job -ScriptBlock {
-                    param($py, $log, $installArgs)
-                    $env:PYTHONHOME      = $null
-                    $env:PYTHONPATH      = $null
-                    $env:PYTHONUNBUFFERED = '1'
-                    $env:PYTHONIOENCODING = 'utf-8'
-                    try {
-                        $pyVer  = & $py --version 2>&1
-                        $pipVer = & $py -m pip --version 2>&1
-                        Add-Content -Path $log -Value "python: $pyVer" -Encoding UTF8 -ErrorAction SilentlyContinue
-                        Add-Content -Path $log -Value "pip: $pipVer" -Encoding UTF8 -ErrorAction SilentlyContinue
-                        Add-Content -Path $log -Value "start: $((Get-Date).ToString('HH:mm:ss'))" -Encoding UTF8 -ErrorAction SilentlyContinue
+                $pipOut = "$pipLog.out"; $pipErrF = "$pipLog.err"
+                $savedHome2 = $env:PYTHONHOME; $savedPath2 = $env:PYTHONPATH
+                $env:PYTHONHOME = $null; $env:PYTHONPATH = $null
+                $env:PYTHONUNBUFFERED = '1'; $env:PYTHONIOENCODING = 'utf-8'
 
-                        & $py @installArgs 2>&1 | ForEach-Object {
-                            Add-Content -Path $log -Value "$_" -Encoding UTF8 -ErrorAction SilentlyContinue
-                        }
+                $pipProc = Start-Process -FilePath $installPy -ArgumentList $installArgs `
+                    -RedirectStandardOutput $pipOut -RedirectStandardError $pipErrF `
+                    -NoNewWindow -PassThru
 
-                        $ec = if ($null -eq $LASTEXITCODE) { 1 } else { $LASTEXITCODE }
-                        Add-Content -Path $log -Value "end: $((Get-Date).ToString('HH:mm:ss'))  exit=$ec" -Encoding UTF8 -ErrorAction SilentlyContinue
-                        return $ec
-                    } catch {
-                        Add-Content -Path $log -Value "EXCEPTION: $_" -Encoding UTF8 -ErrorAction SilentlyContinue
-                        return 1
-                    }
-                } -ArgumentList $captPy, $captLog, $captArgs
-
-                while ($pipJob.State -eq 'Running') {
+                $onTickPip = {
                     [Console]::SetCursorPosition(0, $tableRow + $rowOf[$name])
                     Render-ProgressRow $name $st[$name] $w
                     [Console]::SetCursorPosition(0, $afterRow)
-                    Start-Sleep -Milliseconds 300
-                }
+                }.GetNewClosure()
 
-                $jobResult = @(Receive-Job $pipJob -ErrorAction SilentlyContinue)
-                Remove-Job $pipJob -Force
-                $rawEc = $jobResult | Where-Object { $_ -is [int] } | Select-Object -Last 1
-                $ec = if ($null -eq $rawEc) { 1 } else { [int]$rawEc }
+                $pipRes = Wait-GuardedProcess -Process $pipProc -TimeoutSec $PIP_TIMEOUT_SEC -OnTick $onTickPip
+
+                $env:PYTHONHOME = $savedHome2; $env:PYTHONPATH = $savedPath2
+
+                foreach ($tf in @($pipOut, $pipErrF)) {
+                    if (Test-Path $tf) {
+                        $tc = Get-Content $tf -Raw -ErrorAction SilentlyContinue
+                        if ($tc) { Add-Content -Path $pipLog -Value $tc -Encoding UTF8 -ErrorAction SilentlyContinue }
+                        Remove-Item $tf -Force -ErrorAction SilentlyContinue
+                    }
+                }
+                $ec = if ($pipRes.Completed) { $pipProc.ExitCode } else { 1 }
+                Add-Content -Path $pipLog -Value "end: $((Get-Date).ToString('HH:mm:ss'))  exit=$ec ($($pipRes.Reason))" -Encoding UTF8 -ErrorAction SilentlyContinue
 
                 $pyParent   = Split-Path $installPy -Parent
                 $scriptsDir = if ($pyParent -like "*\Scripts") { $pyParent } else { Join-Path $pyParent "Scripts" }
@@ -738,13 +746,16 @@ function Invoke-Dependencies {
                 -RedirectStandardError $modelLogErr -NoNewWindow -PassThru -ErrorAction SilentlyContinue
 
             if ($modelProc) {
-                while (-not $modelProc.HasExited) {
+                $modelsRef   = $modelsDir
+                $onTickModel = {
                     [Console]::SetCursorPosition(0, $tableRow + $rowOf[$name])
                     Render-ProgressRow $name $st[$name] $w
                     [Console]::SetCursorPosition(0, $afterRow)
-                    Start-Sleep -Milliseconds 500
-                }
-                $modelProc.WaitForExit()
+                }.GetNewClosure()
+                $probeModel = {
+                    try { [string]((Get-ChildItem $modelsRef -Recurse -File -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum) } catch { '' }
+                }.GetNewClosure()
+                $null = Wait-GuardedProcess -Process $modelProc -TimeoutSec $MODEL_TIMEOUT_SEC -StallSec $MODEL_STALL_SEC -LivenessProbe $probeModel -OnTick $onTickModel
             }
 
             Remove-Item $modelScript -Force -ErrorAction SilentlyContinue
