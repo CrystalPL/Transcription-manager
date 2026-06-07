@@ -163,9 +163,25 @@ function Invoke-Dependencies {
         [WhisperDependency]::new()
     )
 
+    $RuntimeDir  = Join-Path $InstallDir "runtime"
+    $manifest    = @{}
+    $needRuntime = $false
+
+    $portableExePaths = @{
+        'Python'   = Join-Path $RuntimeDir "python\python.exe"
+        'ffmpeg'   = Join-Path $RuntimeDir "ffmpeg\bin\ffmpeg.exe"
+        'mkvmerge' = Join-Path $RuntimeDir "mkvtoolnix\mkvmerge.exe"
+        'whisper'  = Join-Path $RuntimeDir "python\Scripts\whisper.exe"
+    }
+    $portablePresent = @{}
+    foreach ($dep in $deps) {
+        $exe = $portableExePaths[$dep.Name]
+        $portablePresent[$dep.Name] = ($null -ne $exe -and (Test-Path $exe))
+    }
+
     Write-Step "[3/5] Sprawdzanie zaleznosci..."
     foreach ($d in $deps) {
-        if ($d.Test()) { Write-OK $d.Name } else { Write-Missing $d.Name }
+        if ($d.Test() -or $portablePresent[$d.Name]) { Write-OK $d.Name } else { Write-Missing $d.Name }
     }
 
     if (Test-Command "nvidia-smi") {
@@ -183,21 +199,6 @@ function Invoke-Dependencies {
     }
 
     Write-Step "[4/5] Instalowanie zaleznosci..."
-    $RuntimeDir  = Join-Path $InstallDir "runtime"
-    $manifest    = @{}
-    $needRuntime = $false
-
-    $portableExePaths = @{
-        'Python'   = Join-Path $RuntimeDir "python\python.exe"
-        'ffmpeg'   = Join-Path $RuntimeDir "ffmpeg\bin\ffmpeg.exe"
-        'mkvmerge' = Join-Path $RuntimeDir "mkvtoolnix\mkvmerge.exe"
-        'whisper'  = Join-Path $RuntimeDir "python\Scripts\whisper.exe"
-    }
-    $portablePresent = @{}
-    foreach ($dep in $deps) {
-        $exe = $portableExePaths[$dep.Name]
-        $portablePresent[$dep.Name] = ($null -ne $exe -and (Test-Path $exe))
-    }
 
     $autoTasks  = [System.Collections.ArrayList]::new()
     $configDeps = @()
