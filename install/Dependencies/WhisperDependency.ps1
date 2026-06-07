@@ -33,7 +33,9 @@
 
     [hashtable] ManifestEntry([string]$Mode, [string]$RuntimeDir, [string]$InstallDir) {
         if ($Mode -eq 'portable') {
-            $full = Join-Path (Join-Path (Join-Path $RuntimeDir "python") "Scripts") "whisper.exe"
+            $envExe = Join-Path $RuntimeDir "whisper-env\Scripts\whisper.exe"
+            $pyExe  = Join-Path $RuntimeDir "python\Scripts\whisper.exe"
+            $full   = if (Test-Path $envExe) { $envExe } else { $pyExe }
             return @{ mode = 'portable'; path = $this.RelPath($full, $InstallDir) }
         }
         return @{ mode = 'system'; path = $this.Command }
