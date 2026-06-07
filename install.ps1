@@ -66,8 +66,9 @@ Get-ChildItem (Join-Path $instDir "Dependencies") -Filter "*Dependency.ps1" |
 
 Get-ChildItem (Join-Path $instDir "Phases") -Filter *.ps1 | ForEach-Object { . $_.FullName }
 
+$logDir = $null
 try {
-    Invoke-Install -RepoRoot $repoRoot -InstallDir $InstallDir -NoShortcut:$NoShortcut -NoDeps:$NoDeps -LogFile $logFile
+    $logDir = Invoke-Install -RepoRoot $repoRoot -InstallDir $InstallDir -NoShortcut:$NoShortcut -NoDeps:$NoDeps -LogFile $logFile
 } catch [OperationCanceledException] {
     if (-not $SkipDownload) {
         Remove-Item $tmpZip -Force -EA SilentlyContinue
@@ -79,4 +80,7 @@ try {
 }
 
 $null = Stop-Transcript -ErrorAction SilentlyContinue
+if ($logDir -and (Test-Path $logFile)) {
+    try { Move-Item $logFile (Join-Path $logDir "install.log") -Force -ErrorAction Stop } catch {}
+}
 $null = Read-Host "  Naciśnij dowolny klawisz aby zamknąć"
